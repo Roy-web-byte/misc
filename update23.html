@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="shortcut icon" href="https://github.githubassets.com/favicon.ico" type="image/x-icon">
+<link rel="icon" href="https://github.githubassets.com/favicon.ico" type="image/x-icon">
+<title>English Reader</title>
+<style>
+/* [保持所有之前的CSS样式不变，这里省略重复部分以节省篇幅] */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  background: #f7f8fa;
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+  position: relative;
+  padding-bottom: 20px;
+}
+
+/* ... 所有之前的CSS样式保持不变 ... */
+
+/* 连读标记样式 - 黑色下划线连接多个单词 */
+.linking-group {
+  display: inline-block;
+  position: relative;
+  padding: 2px 4px;
+  margin-right: 4px;
+  border-bottom: 2px solid #000; /* 黑色下划线 */
+  border-radius: 1px;
+}
+
+.linking-group .word {
+  display: inline-block;
+  padding: 2px 4px;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+}
+
+/* ... 其余样式保持不变 ... */
+</style>
+</head>
+
+<body>
+  <!-- [保持所有HTML结构不变] -->
+  <div class="title">English Reader</div>
+  <select id="voiceSelect"></select>
+  <textarea id="inputArea" placeholder="Paste your English text here..."></textarea>
+  <button id="goBtn">Go</button>
+  <div id="wordCount"></div>
+  <div id="navHistory" style="display: none;">
+    <div class="history-arrows">
+      <span id="prevHistory" class="history-arrow">&#9664;&#xFE0E;</span>
+      <span id="nextHistory" class="history-arrow">&#9654;&#xFE0E;</span>
+    </div>
+    <div id="historyTime"></div>
+  </div>
+  <div id="result"></div>
+  <div id="newWordsArea" style="display: none;">
+    <div class="new-words-title"><span>📚 New Words</span></div>
+    <div id="newWordsList"></div>
+  </div>
+  <button id="addWordBtn" title="Add to new words">+</button>
+  <button id="removeWordBtn" title="Remove from new words">−</button>
+  <button id="trashBtnLeft" class="trash-btn" title="按住此按钮和右侧按钮删除当前记录">🗑️</button>
+  <button id="trashBtnRight" class="trash-btn" title="按住此按钮和左侧按钮删除当前记录">🗑️</button>
+  <button id="backToTopBtn" title="Back to result">↑</button>
+
+<script>
+// [变量声明和基础函数保持不变，这里开始修改关键部分]
+
+// ==================== 改进的连读检测函数 ====================
+function detectLinkingWords(words) {
+  const linkingMarkers = new Array(words.length).fill(false);
+  if (words.length < 2) return linkingMarkers;
+  
+  // 扩展的元音检测（包含常见元音字母和组合）
+  const vowelPattern = /^[aeiouAEIOU]/;
+  const vowelEnding = /[aeiouAEIOU]$/;
+  
+  // 扩展的辅音检测（包含常见辅音字母）
+  const consonantEnding = /[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]$/;
+  
+  // 常见辅音簇结尾（更易与后面元音连读）
+  const consonantClusterEndings = [
+    /nt$/, /nd$/, /ld$/, /rd$/, /rt$/, /st$/, /sp$/, /sk$/, /ft$/, /pt$/,
+    /mp$/, /nk$/, /ng$/, /ct$/, /lt$/, /lp$/, /lk$/, /lm$/, /ln$/,
+    /ll$/, /tt$/, /dd$/, /gg$/, /pp$/, /bb$/, /mm$/, /nn$/, /ss$/, /ff$/, /rr$/
+  ];
+  
+  // 常见H不发音的单词（扩展列表）
+  const hDroppedWords = new Set([
+    'he', 'his', 'her', 'him', 'have', 'has', 'had', 'how', 'here', 'herself',
+    'He', 'His', 'Her', 'Him', 'Have', 'Has', 'Had', 'How', 'Here', 'Herself'
+  ]);
+  
+  // 常见连读短语模式（如 "went to", "fall asleep" 等）
+  const commonLinkingPhrases = [
+    // 辅音+元音连读
+    { pattern: /^[^aeiou]+[aeiou]$/i, next: vowelPattern }, // 辅音结尾 + 元音开头
+    { pattern: /[mnlrt]$/i, next: vowelPattern }, // m/n/l/r/t 结尾 + 元音开头
+    
+    // 相同/相似辅音连读
+    { pattern: /([bdgkpt])$/i, next: /^\1/i }, // 相同辅音
+    { pattern: /[td]$/i, next: /^[tdnl]/i }, // t/d + t/d/n/l
+    
+    // 元音+元音连读（需要插入/j/或/w/音的情况）
+    { pattern: /[iɪeɛaɪɔɪ]$/i, next: vowelPattern }, // 前元音结尾 + 元音开头 → 插入/j/
+    { pattern: /[uʊoɔaʊ]$/i, next: vowelPattern }, // 后元音结尾 + 元音开头 → 插入/w/
+    
+    // 特殊辅音组合
+    { pattern: /r$/, next: vowelPattern }, // r-linking
+    { pattern: /n$/, next: vowelPattern }, // n-linking
+    
+    // 常见具体短语（您提到的例子）
+    { current: 'went', next: 'to' },
+    { current: 'fall', next: 'asleep' },
+    { current: 'fell', next: 'asleep' },
+    { current: 'want', next: 'to' },
+    { current: 'has', next: 'to' },
+    { current: 'have', next: 'to' },
+    { current: 'give', next: 'up' },
+    { current: 'get', next: 'up' },
+    { current: 'look', next: 'at' },
+    { current: 'put', next: 'on' },
+    { current: 'take', next: 'off' },
+    { current: 'come', next: 'on' },
+    { current: 'go', next: 'on' },
+    { current: 'turn', next: 'on' },
+    { current: 'turn', next: 'off' }
+  ];
+
+  for (let i = 0; i < words.length - 1; i++) {
+    const currentWord = words[i].toLowerCase().replace(/[^a-z]/g, '');
+    const nextWord = words[i + 1].toLowerCase().replace(/[^a-z]/g, '');
+    
+    if (!currentWord || !nextWord) continue;
+    
+    const currentRaw = words[i];
+    const nextRaw = words[i + 1];
+    
+    // 规则1: 检查常见短语连读
+    let isLinked = false;
+    for (const phrase of commonLinkingPhrases) {
+      if (phrase.current && phrase.next) {
+        if (currentWord === phrase.current && nextWord === phrase.next) {
+          isLinked = true;
+          break;
+        }
+      } else if (phrase.pattern && phrase.next) {
+        if (phrase.pattern.test(currentRaw) && phrase.next.test(nextRaw)) {
+          isLinked = true;
+          break;
+        }
+      }
+    }
+    
+    // 规则2: 辅音结尾 + 元音开头（强化检测）
+    if (!isLinked && consonantEnding.test(currentRaw) && vowelPattern.test(nextRaw)) {
+      // 检查是否是强连读辅音结尾
+      const hasStrongLinkingConsonant = consonantClusterEndings.some(pattern => 
+        pattern.test(currentWord)
+      );
+      if (hasStrongLinkingConsonant) {
+        isLinked = true;
+      }
+    }
+    
+    // 规则3: H击穿现象
+    if (!isLinked && hDroppedWords.has(words[i + 1])) {
+      // 当前词以辅音结尾，下一个词是H不发音词
+      if (consonantEnding.test(currentRaw)) {
+        isLinked = true;
+      }
+    }
+    
+    // 规则4: 元音结尾 + 元音开头（需要插入音）
+    if (!isLinked && vowelEnding.test(currentRaw) && vowelPattern.test(nextRaw)) {
+      isLinked = true;
+    }
+    
+    // 规则5: 相同辅音（包括变体）
+    if (!isLinked) {
+      const lastChar = currentRaw.charAt(currentRaw.length - 1).toLowerCase();
+      const firstChar = nextRaw.charAt(0).toLowerCase();
+      
+      // 相同辅音
+      if (lastChar === firstChar && /[bcdfghjklmnpqrstvwxyz]/.test(lastChar)) {
+        isLinked = true;
+      }
+      
+      // 相似辅音对
+      const similarPairs = [
+        ['t', 'd'], ['d', 't'], ['p', 'b'], ['b', 'p'],
+        ['k', 'g'], ['g', 'k'], ['f', 'v'], ['v', 'f'],
+        ['s', 'z'], ['z', 's']
+      ];
+      
+      for (const [c1, c2] of similarPairs) {
+        if (lastChar === c1 && firstChar === c2) {
+          isLinked = true;
+          break;
+        }
+      }
+    }
+    
+    linkingMarkers[i] = isLinked;
+  }
+  
+  return linkingMarkers;
+}
+
+// ==================== 修复的生词区单词点击事件 ====================
+// 全局语音状态管理
+let currentWordUtterance = null;
+
+// 专门为生词区单词设计的朗读函数
+function speakNewWord(word, wordElement) {
+  // 停止任何正在进行的朗读
+  if (window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
+  }
+  
+  // 清除所有活跃状态
+  document.querySelectorAll('.sentence, .word, .new-word-item').forEach(el => {
+    el.classList.remove('active');
+  });
+  
+  // 设置当前单词为活跃状态
+  wordElement.classList.add('active');
+  
+  // 创建新的语音实例
+  currentWordUtterance = new SpeechSynthesisUtterance(word);
+  currentWordUtterance.voice = getSelectedVoice();
+  currentWordUtterance.rate = 0.9;
+  currentWordUtterance.pitch = 1.0;
+  
+  // 朗读结束后的清理
+  currentWordUtterance.onend = function() {
+    wordElement.classList.remove('active');
+    currentWordUtterance = null;
+  };
+  
+  currentWordUtterance.onerror = function() {
+    wordElement.classList.remove('active');
+    currentWordUtterance = null;
+  };
+  
+  // 开始朗读
+  window.speechSynthesis.speak(currentWordUtterance);
+}
+
+// 修改更新生词区显示函数
+function updateNewWordsArea() {
+  if (historyIndex >= 0 && historyIndex < historyList.length) {
+    const currentRecord = historyList[historyIndex];
+    
+    if (currentRecord.newWords && currentRecord.newWords.length > 0) {
+      // 清空现有内容
+      newWordsList.innerHTML = '';
+      
+      // 添加每个生词
+      currentRecord.newWords.forEach(word => {
+        const wordEl = document.createElement('div');
+        wordEl.className = 'new-word-item';
+        wordEl.textContent = word;
+        
+        // 修复：完全独立的点击事件处理，避免与选择事件冲突
+        let isClick = false;
+        let touchStartTime = 0;
+        
+        // 鼠标事件
+        wordEl.addEventListener('mousedown', (e) => {
+          isClick = true;
+          e.preventDefault(); // 阻止文本选择
+        });
+        
+        wordEl.addEventListener('mouseup', (e) => {
+          if (isClick) {
+            e.preventDefault();
+            e.stopPropagation();
+            speakNewWord(word, wordEl);
+            isClick = false;
+          }
+        });
+        
+        wordEl.addEventListener('mouseleave', () => {
+          isClick = false;
+        });
+        
+        // 触摸事件（移动端）
+        wordEl.addEventListener('touchstart', (e) => {
+          isClick = true;
+          touchStartTime = Date.now();
+          e.preventDefault(); // 阻止默认行为
+        }, { passive: false });
+        
+        wordEl.addEventListener('touchend', (e) => {
+          const touchDuration = Date.now() - touchStartTime;
+          // 短按视为点击，长按触发移除菜单
+          if (isClick && touchDuration < 500) {
+            e.preventDefault();
+            e.stopPropagation();
+            speakNewWord(word, wordEl);
+          }
+          isClick = false;
+        }, { passive: false });
+        
+        wordEl.addEventListener('touchcancel', () => {
+          isClick = false;
+        });
+        
+        // 长按显示移除按钮（500ms以上）
+        let longPressTimer;
+        wordEl.addEventListener('touchstart', (e) => {
+          longPressTimer = setTimeout(() => {
+            showRemoveButton(e.touches[0].clientX, e.touches[0].clientY, word);
+            isClick = false; // 长按时不算点击
+          }, 500);
+        });
+        
+        wordEl.addEventListener('touchend', () => {
+          clearTimeout(longPressTimer);
+        });
+        
+        // 右键菜单显示移除按钮
+        wordEl.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          showRemoveButton(e.clientX, e.clientY, word);
+        });
+        
+        newWordsList.appendChild(wordEl);
+      });
+      
+      newWordsArea.style.display = 'block';
+    } else {
+      newWordsArea.style.display = 'none';
+    }
+  } else {
+    newWordsArea.style.display = 'none';
+  }
+}
+
+// ==================== 优化渲染函数，改进连读分组 ====================
+function renderResult(segments, linkingData) {
+  result.innerHTML = '';
+  
+  segments.forEach((seg, segIndex) => {
+    const sentenceDiv = document.createElement('div');
+    sentenceDiv.className = 'sentence';
+
+    const speaker = document.createElement('div');
+    speaker.className = 'speaker';
+    speaker.textContent = '🔊';
+
+    const wordsDiv = document.createElement('div');
+    wordsDiv.style.width = '100%';
+    wordsDiv.style.display = 'inline';
+
+    const words = seg.split(/\s+/).filter(Boolean);
+    
+    // 获取当前句子的连读标记
+    const currentLinkingMarks = linkingData && linkingData[segIndex] ? 
+                               linkingData[segIndex] : 
+                               new Array(words.length).fill(false);
+    
+    // 改进的连读分组算法
+    let i = 0;
+    while (i < words.length) {
+      // 检查当前位置是否开始一个连读组
+      if (currentLinkingMarks[i]) {
+        // 创建连读组容器
+        const linkingGroup = document.createElement('span');
+        linkingGroup.className = 'linking-group';
+        linkingGroup.title = 'Likely linking pronunciation';
+        
+        // 收集连续连读的单词
+        const groupWords = [];
+        let j = i;
+        while (j < words.length && currentLinkingMarks[j]) {
+          groupWords.push(words[j]);
+          j++;
+          
+          // 如果下一个单词也存在但不是连读，但当前组可以扩展（如三词连读）
+          if (j < words.length && !currentLinkingMarks[j]) {
+            // 检查是否可能是多词连读短语
+            const potentialPhrase = groupWords.join(' ') + ' ' + words[j];
+            const lowerPhrase = potentialPhrase.toLowerCase();
+            
+            // 常见三词连读模式检查
+            const threeWordPhrases = [
+              'going to be', 'want to go', 'have to go', 'used to be',
+              'supposed to be', 'trying to get', 'waiting for you'
+            ];
+            
+            if (threeWordPhrases.some(phrase => lowerPhrase.includes(phrase))) {
+              groupWords.push(words[j]);
+              j++;
+            }
+          }
+        }
+        
+        // 将组内单词添加到连读组
+        groupWords.forEach((word, idx) => {
+          const w = document.createElement('span');
+          w.className = 'word';
+          w.textContent = word;
+          
+          w.onclick = (e) => {
+            e.stopPropagation();
+            speakWord(word, w);
+          };
+          
+          linkingGroup.appendChild(w);
+          
+          // 添加空格（除了最后一个单词）
+          if (idx < groupWords.length - 1) {
+            linkingGroup.appendChild(document.createTextNode(' '));
+          }
+        });
+        
+        wordsDiv.appendChild(linkingGroup);
+        i = j;
+        
+        // 如果不是最后一个单词，添加普通空格
+        if (i < words.length) {
+          wordsDiv.appendChild(document.createTextNode(' '));
+        }
+      } else {
+        // 非连读单词
+        const word = words[i];
+        const w = document.createElement('span');
+        w.className = 'word';
+        w.textContent = word;
+        
+        w.onclick = (e) => {
+          e.stopPropagation();
+          speakWord(word, w);
+        };
+        
+        wordsDiv.appendChild(w);
+        
+        // 如果不是最后一个单词，添加空格
+        if (i < words.length - 1) {
+          wordsDiv.appendChild(document.createTextNode(' '));
+        }
+        
+        i++;
+      }
+    }
+
+    sentenceDiv.appendChild(speaker);
+    sentenceDiv.appendChild(wordsDiv);
+    
+    // 单击空白处或喇叭，打断并朗读
+    sentenceDiv.addEventListener('click', (e) => {
+      if (e.target.classList.contains('word') || e.target.classList.contains('linking-group')) return;
+      speakSentence(seg, sentenceDiv);
+    });
+
+    // 双击空白处或喇叭，打断并重新朗读
+    sentenceDiv.addEventListener('dblclick', (e) => {
+      if (e.target.classList.contains('word') || e.target.classList.contains('linking-group')) return;
+      window.getSelection().removeAllRanges();
+      speakSentence(seg, sentenceDiv);
+    });
+    
+    result.appendChild(sentenceDiv);
+  });
+  
+  updateHistoryNavButtons();
+}
+
+// ==================== 修改文本选择处理，避免与点击冲突 ====================
+// 在initializePage函数中修改文本选择事件监听
+function initializePage() {
+  // ... 其他初始化代码 ...
+  
+  // 修改文本选择监听，添加防抖和更精确的检测
+  let selectionTimer;
+  let lastSelectedText = '';
+  
+  document.addEventListener('selectionchange', () => {
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(() => {
+      const selection = window.getSelection();
+      const selectedText = selection.toString().trim();
+      
+      // 如果选择文本为空或与上次相同，忽略
+      if (!selectedText || selectedText === lastSelectedText) {
+        return;
+      }
+      
+      lastSelectedText = selectedText;
+      
+      // 检查选择是否在结果区
+      const resultArea = document.getElementById('result');
+      const newWordsArea = document.getElementById('newWordsArea');
+      const range = selection.getRangeAt(0);
+      const selectedNode = range.commonAncestorContainer;
+      
+      // 检查选择是否在结果区的句子中
+      if (resultArea.contains(selectedNode) || resultArea === selectedNode) {
+        const rangeRect = range.getBoundingClientRect();
+        if (rangeRect) {
+          const x = rangeRect.left + rangeRect.width / 2;
+          const y = rangeRect.top;
+          showAddButton(x, y, selectedText);
+        }
+      } 
+      // 检查选择是否在生词区
+      else if (newWordsArea.contains(selectedNode) || newWordsArea === selectedNode) {
+        const rangeRect = range.getBoundingClientRect();
+        if (rangeRect) {
+          const x = rangeRect.left + rangeRect.width / 2;
+          const y = rangeRect.top;
+          showRemoveButton(x, y, selectedText);
+        }
+      } else {
+        hideAllActionButtons();
+      }
+    }, 100); // 100ms防抖
+  });
+  
+  // ... 其他初始化代码 ...
+}
+
+// ==================== 修复语音函数，确保状态清晰 ====================
+function speakSentence(text, sentenceEl) {
+  // 停止所有语音
+  stopAllSpeaking();
+  
+  // 清除所有活跃状态
+  document.querySelectorAll('.sentence, .word, .new-word-item').forEach(el => {
+    el.classList.remove('active');
+  });
+  
+  const u = new SpeechSynthesisUtterance(text);
+  u.voice = getSelectedVoice();
+  u.rate = 0.96;
+  u.pitch = 1.0;
+  sentenceEl.classList.add('active');
+  
+  u.onend = () => {
+    sentenceEl.classList.remove('active');
+    currentUtterance = null;
+  };
+  
+  u.onerror = () => {
+    sentenceEl.classList.remove('active');
+    currentUtterance = null;
+  };
+  
+  window.speechSynthesis.speak(u);
+  currentUtterance = u;
+}
+
+function speakWord(word, wordEl) {
+  stopAllSpeaking();
+  
+  document.querySelectorAll('.sentence, .word, .new-word-item').forEach(el => {
+    el.classList.remove('active');
+  });
+  
+  wordEl.classList.add('active');
+  const u = new SpeechSynthesisUtterance(word);
+  u.voice = getSelectedVoice();
+  u.rate = 0.9;
+  
+  u.onend = () => {
+    wordEl.classList.remove('active');
+    currentUtterance = null;
+  };
+  
+  u.onerror = () => {
+    wordEl.classList.remove('active');
+    currentUtterance = null;
+  };
+  
+  window.speechSynthesis.speak(u);
+  currentUtterance = u;
+}
+
+// 增强的停止语音函数
+function stopAllSpeaking() {
+  if (window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
+  }
+  currentUtterance = null;
+  if (currentWordUtterance) {
+    // 如果生词区有独立语音实例也停止
+    window.speechSynthesis.cancel();
+    currentWordUtterance = null;
+  }
+}
+
+// ==================== 其他原有函数保持不变 ====================
+// [其余所有函数保持原样，包括：isAtBottom, updateButtonVisibility, requestWakeLock, saveCurrentState, 
+// initPageWithLastResult, setupTrashButtons, checkBothTrashPressed, clearTrashPressStates,
+// deleteCurrentRecord, formatDateTime, loadHistoryFromStorage, saveToHistory, 
+// updateHistoryNavButtons, showAddButton, showRemoveButton, hideAllActionButtons,
+// addToNewWords, removeFromNewWords, processText, navigateHistory, scrollToResult,
+// loadVoices, getSelectedVoice, splitIntoRealSentences, 事件监听器等]
+
+// 页面加载完成后初始化
+window.addEventListener('load', function() {
+  // 原有的初始化代码
+  setupTrashButtons();
+  loadVoices();
+  initPageWithLastResult();
+  updateButtonVisibility();
+  
+  // 添加按钮事件监听
+  addWordBtn.addEventListener('click', addToNewWords);
+  removeWordBtn.addEventListener('click', removeFromNewWords);
+  
+  // 点击页面其他位置隐藏按钮（改进版）
+  document.addEventListener('click', (e) => {
+    // 如果点击的是按钮本身，不隐藏
+    if (addWordBtn.contains(e.target) || removeWordBtn.contains(e.target)) {
+      return;
+    }
+    
+    // 如果点击的是单词（结果区或生词区），不隐藏
+    if (e.target.classList.contains('word') || 
+        e.target.classList.contains('new-word-item') ||
+        e.target.closest('.linking-group')) {
+      return;
+    }
+    
+    // 其他情况隐藏按钮
+    hideAllActionButtons();
+  });
+  
+  // 滚动事件监听
+  window.addEventListener('scroll', updateButtonVisibility);
+  
+  // 语音开始事件
+  document.addEventListener('speechstart', () => {
+    hideAllActionButtons();
+  });
+});
+
+// Go按钮事件
+goBtn.addEventListener('click', () => {
+  const text = inputArea.value.trim();
+  if (text) {
+    processText(text, true);
+    inputArea.value = '';
+  }
+});
+
+// 历史导航
+prevHistoryBtn.addEventListener('click', () => {
+  navigateHistory('prev');
+});
+nextHistoryBtn.addEventListener('click', () => {
+  navigateHistory('next');
+});
+
+// 返回顶部
+backToTopBtn.addEventListener('click', scrollToResult);
+
+// 语音API回调
+window.speechSynthesis.onvoiceschanged = loadVoices;
+</script>
+</body>
+</html>
+
